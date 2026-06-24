@@ -1,6 +1,6 @@
 """
 Gold Trading Dashboard — Beginner-friendly multi-timeframe strategy
-- Data: Yahoo Finance (GC=F by default, with fallbacks)
+- Data: Yahoo Finance (XAUUSD=X by default)
 - Timeframes: 15m entries, 1H and 4H trend confirmation
 - Entry: 15m EMA(8) crosses above EMA(21) AND 1H & 4H are bullish (EMA50>EMA200)
 - Filters: RSI, minimum volume
@@ -19,49 +19,18 @@ st.set_page_config(layout="wide", page_title="Gold Beginner Trading Dashboard")
 
 # ---------------- Helpers / indicators ----------------
 @st.cache_data(ttl=120)
-def download_15m(ticker="GC=F", period="60d"):
-    """Download 15m OHLCV data with simple fallbacks.
-    Tries the requested ticker first, then common alternatives (GC=F, XAUUSD=X, GLD).
-    Also tries progressively shorter periods if no data found.
-    Returns the first non-empty DataFrame or an empty DataFrame if all attempts fail.
-    """
-    candidates = []
-    # preserve the user's ticker first
-    if isinstance(ticker, str):
-        candidates.append(ticker)
-    # add sensible fallbacks
-    for t in ("GC=F", "XAUUSD=X", "GLD"):
-        if t not in candidates:
-            candidates.append(t)
-
-    periods_to_try = [period, "30d", "14d", "7d", "3d"]
-
-    for p in periods_to_try:
-        for t in candidates:
-            try:
-                df = yf.download(tickers=t, period=p, interval="15m", progress=False)
-            except Exception:
-                df = pd.DataFrame()
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                # normalize index and columns
-                try:
-                    df.index = pd.to_datetime(df.index)
-                except Exception:
-                    continue
-                # ensure required cols exist
-                if all(c in df.columns for c in ["Open", "High", "Low", "Close", "Volume"]):
-                    return df[["Open", "High", "Low", "Close", "Volume"]]
-                else:
-                    # some Yahoo endpoints may return different column names; skip if not full OHLCV
-                    continue
-    # nothing found
-    return pd.DataFrame()
+def download_15m(ticker="XAUUSD=X", period="60d"):
+    df = yf.download(tickers=ticker, period=period, interval="15m", progress=False)
+    if df.empty:
+        return df
+    df.index = pd.to_datetime(df.index)
+    return df[["Open","High","Low","Close","Volume"]]
 
 def resample_ohlcv(df, minutes):
-    """Resample OHLCV DataFrame to the specified minutes.
-    This function is defensive: it ensures a DatetimeIndex, removes timezone information,
-    sorts the index, and uses a robust minute-based rule string. If resampling fails it
-    returns an empty DataFrame instead of raising.
+    """Resample OHLCV DataFrame to the specified minutes in a defensive way.
+    Ensures a DatetimeIndex, drops invalid times, removes tz info, sorts the index,
+    and uses a minute-based rule string which is robust across pandas versions.
+    If resampling fails it returns an empty DataFrame and shows a warning in the app.
     """
     if minutes == 15:
         return df.copy()
@@ -69,28 +38,27 @@ def resample_ohlcv(df, minutes):
     # work on a copy
     df = df.copy()
 
-    # ensure index is datetime
+    # ensure index is a DatetimeIndex
     try:
         if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index)
+            df.index = pd.to_datetime(df.index, errors="coerce")
     except Exception:
         return pd.DataFrame()
 
-    # remove timezone info if present (resample can be picky)
+    # drop rows with invalid datetimes
+    df = df.loc[df.index.notna()]
+    if df.empty:
+        return pd.DataFrame()
+
+    # remove timezone info if present
     try:
         if getattr(df.index, "tz", None) is not None:
             df.index = df.index.tz_convert(None)
     except Exception:
-        # ignore tz conversion errors
         try:
             df.index = df.index.tz_localize(None)
         except Exception:
             pass
-
-    # drop invalid datetimes
-    df = df.loc[df.index.notna()]
-    if df.empty:
-        return pd.DataFrame()
 
     # sort index
     try:
@@ -100,12 +68,11 @@ def resample_ohlcv(df, minutes):
 
     rule = f"{int(minutes)}min"
     try:
-        agg = df.resample(rule).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"})
+        agg = df.resample(rule).agg({"Open":"first","High":"max","Low":"min","Close":"last","Volume":"sum"})
         return agg.dropna()
     except Exception as e:
-        # Log a minimal warning in the app and return empty DataFrame so UI can show friendly message
         try:
-            st.warning(f"Resampling failed: {e}")
+            st.warning(f"Resample failed: {e}")
         except Exception:
             pass
         return pd.DataFrame()
@@ -211,7 +178,7 @@ def find_entries(df15, df1h, df4h, params):
 # ---------------- Sidebar: user inputs ----------------
 with st.sidebar:
     st.header("Settings")
-    ticker = st.text_input("Ticker (Yahoo Finance)", value="GC=F")
+    ticker = st.text_input("Ticker (Yahoo Finance)", value="XAUUSD=X")
     period = st.selectbox("Download period (15m)", ["30d","60d","90d"], index=1)
     ema_fast = st.number_input("15m EMA fast (entry)", min_value=2, max_value=50, value=8)
     ema_slow = st.number_input("15m EMA slow (entry)", min_value=2, max_value=100, value=21)
