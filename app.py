@@ -1,6 +1,6 @@
 """
 Gold Trading Dashboard — Beginner-friendly multi-timeframe strategy
-- Data: Yahoo Finance (XAUUSD=X by default)
+- Data: Yahoo Finance (GC=F by default)
 - Timeframes: 15m entries, 1H and 4H trend confirmation
 - Entry: 15m EMA(8) crosses above EMA(21) AND 1H & 4H are bullish (EMA50>EMA200)
 - Filters: RSI, minimum volume
@@ -19,7 +19,7 @@ st.set_page_config(layout="wide", page_title="Gold Beginner Trading Dashboard")
 
 # ---------------- Helpers / indicators ----------------
 @st.cache_data(ttl=120)
-def download_15m(ticker="XAUUSD=X", period="60d"):
+def download_15m(ticker="GC=F", period="60d"):
     df = yf.download(tickers=ticker, period=period, interval="15m", progress=False)
     if df.empty:
         return df
@@ -134,7 +134,7 @@ def find_entries(df15, df1h, df4h, params):
 # ---------------- Sidebar: user inputs ----------------
 with st.sidebar:
     st.header("Settings")
-    ticker = st.text_input("Ticker (Yahoo Finance)", value="XAUUSD=X")
+    ticker = st.text_input("Ticker (Yahoo Finance)", value="GC=F")
     period = st.selectbox("Download period (15m)", ["30d","60d","90d"], index=1)
     ema_fast = st.number_input("15m EMA fast (entry)", min_value=2, max_value=50, value=8)
     ema_slow = st.number_input("15m EMA slow (entry)", min_value=2, max_value=100, value=21)
@@ -265,4 +265,4 @@ else:
 with st.expander("Show raw 15m data (last 500 rows)"):
     st.dataframe(df15.tail(500))
 
-st.markdown("Notes: Data come from Yahoo Finance intraday 15m. Availability and history length depend on Yahoo. For continuous live trading or longer history use a dedicated market-data API (I can integrate one on request).")
+st.markdown("Notes: Data come from Yahoo Finance intraday 15m. Availability and history length depend on Yahoo. For continuous live trading or longer history use a dedicated market-data API (I ca[...]")
