@@ -1,6 +1,6 @@
 """
 Gold Trading Dashboard — Beginner-friendly multi-timeframe strategy
-- Data: Yahoo Finance (GC=F by default)
+- Data: Yahoo Finance (GC=F by default, with fallbacks)
 - Timeframes: 15m entries, 1H and 4H trend confirmation
 - Entry: 15m EMA(8) crosses above EMA(21) AND 1H & 4H are bullish (EMA50>EMA200)
 - Filters: RSI, minimum volume
@@ -20,18 +20,95 @@ st.set_page_config(layout="wide", page_title="Gold Beginner Trading Dashboard")
 # ---------------- Helpers / indicators ----------------
 @st.cache_data(ttl=120)
 def download_15m(ticker="GC=F", period="60d"):
-    df = yf.download(tickers=ticker, period=period, interval="15m", progress=False)
-    if df.empty:
-        return df
-    df.index = pd.to_datetime(df.index)
-    return df[["Open","High","Low","Close","Volume"]]
+    """Download 15m OHLCV data with simple fallbacks.
+    Tries the requested ticker first, then common alternatives (GC=F, XAUUSD=X, GLD).
+    Also tries progressively shorter periods if no data found.
+    Returns the first non-empty DataFrame or an empty DataFrame if all attempts fail.
+    """
+    candidates = []
+    # preserve the user's ticker first
+    if isinstance(ticker, str):
+        candidates.append(ticker)
+    # add sensible fallbacks
+    for t in ("GC=F", "XAUUSD=X", "GLD"):
+        if t not in candidates:
+            candidates.append(t)
+
+    periods_to_try = [period, "30d", "14d", "7d", "3d"]
+
+    for p in periods_to_try:
+        for t in candidates:
+            try:
+                df = yf.download(tickers=t, period=p, interval="15m", progress=False)
+            except Exception:
+                df = pd.DataFrame()
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                # normalize index and columns
+                try:
+                    df.index = pd.to_datetime(df.index)
+                except Exception:
+                    continue
+                # ensure required cols exist
+                if all(c in df.columns for c in ["Open", "High", "Low", "Close", "Volume"]):
+                    return df[["Open", "High", "Low", "Close", "Volume"]]
+                else:
+                    # some Yahoo endpoints may return different column names; skip if not full OHLCV
+                    continue
+    # nothing found
+    return pd.DataFrame()
 
 def resample_ohlcv(df, minutes):
+    """Resample OHLCV DataFrame to the specified minutes.
+    This function is defensive: it ensures a DatetimeIndex, removes timezone information,
+    sorts the index, and uses a robust minute-based rule string. If resampling fails it
+    returns an empty DataFrame instead of raising.
+    """
     if minutes == 15:
         return df.copy()
-    rule = f"{minutes}T"
-    agg = df.resample(rule).agg({"Open":"first","High":"max","Low":"min","Close":"last","Volume":"sum"})
-    return agg.dropna()
+
+    # work on a copy
+    df = df.copy()
+
+    # ensure index is datetime
+    try:
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index)
+    except Exception:
+        return pd.DataFrame()
+
+    # remove timezone info if present (resample can be picky)
+    try:
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_convert(None)
+    except Exception:
+        # ignore tz conversion errors
+        try:
+            df.index = df.index.tz_localize(None)
+        except Exception:
+            pass
+
+    # drop invalid datetimes
+    df = df.loc[df.index.notna()]
+    if df.empty:
+        return pd.DataFrame()
+
+    # sort index
+    try:
+        df = df.sort_index()
+    except Exception:
+        pass
+
+    rule = f"{int(minutes)}min"
+    try:
+        agg = df.resample(rule).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"})
+        return agg.dropna()
+    except Exception as e:
+        # Log a minimal warning in the app and return empty DataFrame so UI can show friendly message
+        try:
+            st.warning(f"Resampling failed: {e}")
+        except Exception:
+            pass
+        return pd.DataFrame()
 
 def ema(series, span):
     return series.ewm(span=span, adjust=False).mean()
